@@ -10,8 +10,11 @@ NULL
 ##' (\email{brenton.kenkel@@gmail.com}), with bug reports or feature requests.
 ##' @name polywog-package
 ##' @docType package
-##' @section Acknowledgements: We thank the Wallis Institute of Political
-##' Economy for financial support.
+##' @section Acknowledgements: We are grateful to Tyson Chatangier for many
+##' helpful suggestions about an earlier version of the package.  We also thank
+##' the Wallis Institute of Political Economy and the Theory and Statistics
+##' Research Lab at the University of Rochester for financial support during the
+##' writing of the package.
 ##' @references
 ##' Brenton Kenkel and Curtis S. Signorino.  2012.  "A Method for Flexible
 ##' Functional Form Estimation: Bootstrapped Basis Regression with Variable
@@ -75,6 +78,8 @@ NULL
 ##' @param penwt.method estimator for obtaining first-stage estimates in
 ##' logistic models when \code{method = "alasso"}: \code{"lm"} (default) for a
 ##' linear probability model, \code{"glm"} for logistic regression.
+##' @param unpenalized names of model terms to be exempt from the adaptive
+##' penalty (only available when \code{model = "alasso"}).
 ##' @param boot number of bootstrap iterations (0 for no bootstrapping).
 ##' @param control.boot list of arguments to be passed to
 ##' \code{\link{bootPolywog}} when bootstrapping; see \code{\link{control.bp}}.
@@ -115,6 +120,8 @@ NULL
 ##'   \item{\code{penwt.method}}{estimator for penalty weights in adaptive LASSO
 ##' models, \code{"lm"} or \code{"glm"}; is \code{NULL} if \code{method =
 ##' "scad"}.}
+##'   \item{\code{unpenalized}}{columns of the model matrix (not including
+##' intercept) to be exempt from the adaptive penalty.}
 ##'   \item{\code{nfolds}}{number of cross-validation folds.}
 ##'   \item{\code{terms}}{the \code{\link{terms}} object used in fitting.}
 ##'   \item{\code{pivot}}{indices of the non-collinear columns of the full basis
@@ -183,6 +190,7 @@ polywog <- function(formula, data, subset, weights, na.action,
                     family = c("gaussian", "binomial"),
                     method = c("alasso", "scad", "none"),
                     penwt.method = c("lm", "glm"),
+                    unpenalized = character(0),
                     boot = 0, control.boot = control.bp(),
                     .parallel = FALSE,
                     model = TRUE, X = FALSE, y = FALSE,
@@ -261,6 +269,19 @@ polywog <- function(formula, data, subset, weights, na.action,
         penwt.method <- NULL
     }
 
+    ## Check for unpenalized columns
+    if (length(unpenalized) > 0 && method == "scad") {
+        unpenalized <- character(0)
+        warning("Argument 'unpenalized' is unavailable when method = \"scad\"")
+    }
+    nopen <- which(colnames(X) %in% unpenalized)
+    if (length(unpenalized) > length(nopen)) {
+        warning("Some terms in 'unpenalized' do not appear in the model: ",
+                paste(unpenalized[!(unpenalized %in% colnames(X))],
+                      collapse = ", "))
+    }
+    penwt[nopen] <- 0
+
     ## Compute cross-validated model fit
     fitPolywog <- switch(method,
                          alasso = fitALasso,
@@ -295,6 +316,7 @@ polywog <- function(formula, data, subset, weights, na.action,
                 weights = if (nowt) NULL else w,
                 method = method,
                 penwt.method = penwt.method,
+                unpenalized = nopen,
                 nfolds = nfolds,
                 # (5)
                 terms = terms,
@@ -306,6 +328,8 @@ polywog <- function(formula, data, subset, weights, na.action,
                 # (6)
                 varNames = varNames,
                 call = cl)
+    if (method != "none" && family == "binomial")
+        ans$fitted.values <- plogis(ans$fitted.values)
     class(ans) <- "polywog"
     if (model)
         ans$model <- mf
@@ -343,17 +367,18 @@ polywog <- function(formula, data, subset, weights, na.action,
 ##' @author Brenton Kenkel and Curtis S. Signorino
 ##' @export
 control.bp <- function(reuse.lambda = FALSE, reuse.penwt = FALSE,
-                       report = FALSE, scad.maxit = 5000)
+                       maxtries = 1000, min.prop = 0, report = FALSE,
+                       scad.maxit = 5000)
 {
     list(reuse.lambda = reuse.lambda, reuse.penwt = reuse.penwt,
-         report = report, scad.maxit = scad.maxit)
+         maxtries = maxtries, report = report, scad.maxit = scad.maxit)
 }
 
 ##
 ## Innards of the bootstrap procedure
 ##
 bootFit <- function(X, y, weights, family, lambda, penwt, method, penwt.method,
-                    nfolds, scad.maxit, pb, i)
+                    unpenalized, nfolds, scad.maxit, pb, i)
 {
     ## Calculate penalty weights unless specified
     if (method == "alasso" && is.null(penwt)) {
@@ -363,6 +388,8 @@ bootFit <- function(X, y, weights, family, lambda, penwt, method, penwt.method,
         } else {
             penwt <- penaltyWeightsBinary(X, y, weights)
         }
+
+        penwt[unpenalized] <- 0
     }
 
     ## Fit model on bootstrap data and catch any convergence errors
@@ -402,6 +429,13 @@ bootFit <- function(X, y, weights, family, lambda, penwt, method, penwt.method,
 ##' @param reuse.penwt logical: whether to use the penalty weights from the
 ##' original dataset for adaptive LASSO models (\code{TRUE}), or to re-calculate
 ##' penalty weights within each iteration (\code{FALSE}, default).
+##' @param maxtries maximum number of attempts to generate a bootstrap sample
+##' with a non-collinear model matrix (often problematic with lopsided binary
+##' regressors) before failing.
+##' @param min.prop for models with a binary response, minimum proportion of
+##' non-modal outcome to ensure is included in each bootstrap iteration (for
+##' example, set \code{min.prop = 0.1} to throw out any bootstrap iteration
+##' where less than 10 percent of the responses are 1's)
 ##' @param report logical: whether to print a status bar.  Not available if
 ##' \code{.parallel = TRUE}.
 ##' @param scad.maxit maximum number of iterations for \code{\link{ncvreg}} in
@@ -450,7 +484,9 @@ bootFit <- function(X, y, weights, family, lambda, penwt, method, penwt.method,
 ##' stopWorkers(w)
 ##' }
 bootPolywog <- function(model, nboot = 100, reuse.lambda = FALSE,
-                        reuse.penwt = FALSE, report = FALSE, scad.maxit = 5000,
+                        reuse.penwt = FALSE, maxtries = 1000, min.prop = 0,
+                        report = FALSE,
+                        scad.maxit = 5000,
                         .parallel = FALSE, .matrixOnly = FALSE)
 {
     ## Load 'foreach' package for parallelization if requested
@@ -472,6 +508,7 @@ bootPolywog <- function(model, nboot = 100, reuse.lambda = FALSE,
     family <- model$family
     method <- model$method
     penwt.method <- model$penwt.method
+    unpenalized <- model$unpenalized
     pivot <- model$pivot
     nobs <- model$nobs
     lambda <- if (reuse.lambda) model$lambda else NULL
@@ -496,6 +533,7 @@ bootPolywog <- function(model, nboot = 100, reuse.lambda = FALSE,
             stop("Fitted object must contain either 'model' or both 'X' and 'y'; re-run polywog with \"model = TRUE\"")
         y <- model.part(formula, model$model, lhs = 1, drop = TRUE)
     }
+    isBinary <- length(unique(y)) <= 2
 
     ## Bootstrap iterations
     pb <- if (report) txtProgressBar(min = 0, max = nboot) else NULL
@@ -504,25 +542,37 @@ bootPolywog <- function(model, nboot = 100, reuse.lambda = FALSE,
     if (.parallel) {
         ## Loop in parallel via 'foreach'
         ans <- foreach (i = seq_len(nboot), .packages = "polywog") %dopar% {
+            tries <- 0
             repeat {
                 ## Ensure that the bootstrap X matrix has the same rank as the
                 ## original one
+                tries <- tries + 1
+                if (tries > maxtries)
+                    stop("'maxtries' reached; no non-collinear bootstrap sample found")
                 ind <- sample(seq_len(nobs), nobs, replace = TRUE)
-                if (qr(cbind(1L, X[ind, , drop = FALSE]))$rank == ncf)
+                Xgood <- qr(cbind(1L, X[ind, , drop = FALSE]))$rank == ncf
+                ygood <- !isBinary || (mean(y[ind]) > min.prop &&
+                                       mean(1-y[ind]) > min.prop)
+                if (Xgood && ygood)
                     break
             }
             polywog:::bootFit(X = X[ind, , drop = FALSE], y = y[ind], weights =
                     weights[ind], family = family, lambda = lambda, penwt =
                     penwt, method = method, penwt.method = penwt.method,
+                    unpenalized = unpenalized,
                     nfolds = nfolds, scad.maxit = scad.maxit, pb = pb, i = i)
         }
     } else {
         ## Use a sequential 'for' loop
         ans <- vector("list", nboot)
         for (i in seq_len(nboot)) {
+            tries <- 0
             repeat {
                 ## Ensure that the bootstrap X matrix has the same rank as the
                 ## original one
+                tries <- tries + 1
+                if (tries > maxtries)
+                    stop("'maxtries' reached; no non-collinear bootstrap sample found")
                 ind <- sample(seq_len(nobs), nobs, replace = TRUE)
                 if (qr(cbind(1L, X[ind, , drop = FALSE]))$rank == ncf)
                     break
@@ -531,6 +581,7 @@ bootPolywog <- function(model, nboot = 100, reuse.lambda = FALSE,
                 bootFit(X = X[ind, , drop = FALSE], y = y[ind], weights =
                         weights[ind], family = family, lambda = lambda, penwt =
                         penwt, method = method, penwt.method = penwt.method,
+                        unpenalized = unpenalized,
                         nfolds = nfolds, scad.maxit = scad.maxit, pb = pb, i = i)
         }
     }

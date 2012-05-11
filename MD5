@@ -1,0 +1,17 @@
+6ad0bd3c877f513c1ee0f66a4eabdd6c *DESCRIPTION
+e9537e19aaecf61efddd0719b436d6ea *NAMESPACE
+91299556ea1cf8f5f19d0896e09939d5 *R/fn_plot.r
+900e79d2f9f321b6fa2a7ae1d8b92fab *R/fn_poly.r
+66e115a571e07f59e68017c38de7483b *R/fn_pred.r
+6ddb2606ae562107d3529e65dd7ba18e *R/helpers.r
+bd52b46565c417c5d3b71eef6fbc69e9 *R/polywog.r
+83b7347e97ef51ec001d712bbf3cbe64 *man/bootPolywog.Rd
+30b98da51ddb14a1682b26aad158d928 *man/control.bp.Rd
+9ba69c5fdc9158e0f9338a00aad28e24 *man/plot.polywog.Rd
+bb9e84237e483a9b644b2fdf1f0d466b *man/polym2.Rd
+e8f34315dcbda84f90daf58efcaeb54a *man/polywog-package.Rd
+2880d699138e3d3648ae0fc114bc0db0 *man/polywog.Rd
+bf271866f54acd57bcb86ac052ec8ab3 *man/predVals.Rd
+f0c41900bf74adef8e83c5e2de8afd00 *man/predict.polywog.Rd
+76bbf15c1a7524d1e8e91399347d9de2 *man/rawpoly.Rd
+04212b3d597ba8444100172bfde674fd *man/summary.polywog.Rd

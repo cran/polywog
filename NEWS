@@ -1,0 +1,30 @@
+============================================================
+=== R package 'polywog'
+===
+=== Code by Brenton Kenkel and Curtis S. Signorino
+=== Maintained by Brenton Kenkel (brenton.kenkel@gmail.com)
+============================================================
+
+
+polywog 0.2-0 (2012-06-26)
+--------------------------
+
+* New function cv.polywog() to select both the polynomial degree and the
+  penalization parameter by cross-validation
+
+* New method margEff.polywog() to compute observation-wise and average marginal
+  effects from a fitted model
+
+* varNames element of a "polywog" object is now a character vector rather than a
+  list (and is generated more safely)
+
+* "polyTerms" attribute of matrix returned by polym2() is now a matrix rather
+  than a data frame
+
+* predict.polywog() now works correctly when newdata is a model frame
+
+
+polywog 0.1-0 (2012-05-12)
+--------------------------
+
+* Initial release

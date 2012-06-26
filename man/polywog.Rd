@@ -4,7 +4,7 @@
 \usage{
   polywog(formula, data, subset, weights, na.action,
     degree = 3, family = c("gaussian", "binomial"),
-    method = c("alasso", "scad"),
+    method = c("alasso", "scad", "none"),
     penwt.method = c("lm", "glm"), boot = 0,
     control.boot = control.bp(), .parallel = FALSE,
     model = TRUE, X = FALSE, y = FALSE, nfolds = 10,
@@ -35,7 +35,9 @@
   response only).}
 
   \item{method}{variable selection method: \code{"alasso"}
-  (default) for adaptive LASSO or \code{"scad"} for SCAD.}
+  (default) for adaptive LASSO or \code{"scad"} for SCAD.
+  You can also select \code{method = "none"} to return the
+  model matrix and other information without fitting.}
 
   \item{penwt.method}{estimator for obtaining first-stage
   estimates in logistic models when \code{method =
@@ -108,15 +110,14 @@
   fitting.} \item{\code{polyTerms}}{a matrix recording how
   many powers of each raw input term are represented in
   each column of the design matrix.}
-  \item{\code{varNames}}{a list of the names of the raw
-  input variables included within the polynomial expansion
-  and linearly.} \item{\code{call}}{the original function
-  call.} \item{\code{model}}{(if requested) the model frame
-  (see \code{\link{model.frame}}).} \item{\code{X}}{(if
-  requested) the basis-expanded design matrix.}
-  \item{\code{y}}{(if requested) the response variable.}
-  \item{\code{boot.matrix}}{(if \code{boot > 0}) a sparse
-  matrix of class
+  \item{\code{varNames}}{names of the raw input variables
+  included in the model.} \item{\code{call}}{the original
+  function call.} \item{\code{model}}{(if requested) the
+  model frame (see \code{\link{model.frame}}).}
+  \item{\code{X}}{(if requested) the basis-expanded design
+  matrix.} \item{\code{y}}{(if requested) the response
+  variable.} \item{\code{boot.matrix}}{(if \code{boot > 0})
+  a sparse matrix of class
   \code{"\link[=dgCMatrix-class]{dgCMatrix}"} containing
   bootstrap coefficients (see \code{\link{bootPolywog}}).}
   }
@@ -153,7 +154,10 @@
   For both the adaptive LASSO and SCAD, the penalization
   factor \eqn{\lambda} is chosen by k-fold
   cross-validation.  The selected value minimizes the
-  average mean squared error of out-of-sample fits.
+  average mean squared error of out-of-sample fits.  (To
+  select both \eqn{\lambda} and the polynomial degree
+  simultaneously via cross-validation, see
+  \code{\link{cv.polywog}}.)
 
   The bootstrap iterations may be run in parallel via
   \code{\link[foreach]{foreach}} by registering an
@@ -200,7 +204,9 @@ cbind(coef(fit1), coef(fit2))
   \code{\link{bootPolywog}}.  To generate fitted values,
   see \code{\link{predVals}} (and the underlying method
   \code{\link{predict.polywog}}).  For plots, see
-  \code{\link{plot.polywog}}.
+  \code{\link{plot.polywog}}. The polynomial degree may be
+  selected via cross-validation using
+  \code{\link{cv.polywog}}.
 
   Polynomial basis expansions of matrix inputs are computed
   with \code{\link{polym2}}.

@@ -1,7 +1,3 @@
-##' @include helpers.r
-##' @include fn_pred.r
-NULL
-
 ##' Marginal effects for polywog models
 ##'
 ##' Computes average and observationwise marginal effects from a fitted
@@ -18,7 +14,7 @@ NULL
 ##' @param xvar a character string containing the name of a raw input variable
 ##' (from \code{object$varNames}).  Partial matches are allowed.
 ##' @param drop logical: whether to convert one-column matrices in the output to
-##' vectors (see Details).
+##' vectors.
 ##' @param ... other arguments, currently ignored.
 ##' @return If \code{xvar} is specified, a numeric object containing
 ##' the marginal effect of the chosen variable at each observation in
@@ -39,26 +35,7 @@ NULL
 ##' @author Brenton Kenkel and Curtis S. Signorino
 ##' @method margEff polywog
 ##' @export
-##' @examples
-##' ## Using occupational prestige data
-##' data(Prestige, package = "car")
-##' Prestige <- transform(Prestige, income = income / 1000)
-##'
-##' ## Fit a polywog model
-##' set.seed(22)
-##' fit1 <- polywog(prestige ~ education + income | type, data = Prestige)
-##'
-##' ## Compute marginal effects for all variables
-##' me1 <- margEff(fit1)
-##' summary(me1)  # type was included linearly, hence constant effects
-##'
-##' ## Plotting density of the results
-##' plot(me1)
-##'
-##' ## Can do the same when just examining a single variable
-##' me2 <- margEff(fit1, xvar = "income")
-##' summary(me2)
-##' plot(me2)
+##' @example inst/examples/margEff.polywog.r
 ##' @importFrom miscTools margEff
 margEff.polywog <- function(object, xvar = NULL, drop = FALSE, ...)
 {
@@ -85,31 +62,18 @@ margEff.polywog <- function(object, xvar = NULL, drop = FALSE, ...)
     if (is.numeric(x) && !xbinary) {
         ##-- CONTINUOUS VARIABLE --##
 
-        ## Extract the raw/un-transformed model matrix
-        formula <- removeIntercepts(object$formula, mf)
-        Xraw <- model.matrix(formula, data = mf, rhs = 1)
-        if (length(object$formula)[2] > 1)
-            Xraw <- cbind(Xraw, model.matrix(formula, data = mf, rhs = 2))
+        X <- makeX(object$formula, mf)
+        xc <- getXcols(xvar, colnames(X))
+        ans <- computeMargEff(X = X,
+                              poly_terms = object$polyTerms,
+                              coef = coef(object),
+                              coef_is_zero = coef(object) == 0,
+                              xvar_col = xc - 1)
 
-        xc <- getXcols(xvar, colnames(Xraw))
-        ncoef <- length(coef(object)) - 1  # Not considering intercept
-        pt <- object$polyTerms
-        ans <- rep(0, nrow(Xraw))
-
-        ## Loop over each coefficient
-        for (i in seq_len(ncoef)) {
-            ## Move on if the term doesn't include the variable of interest or
-            ## if the term's coefficient is zero
-            if (pt[i, xc] == 0 || coef(object)[i+1] == 0)
-                next
-
-            ## Compute appropriate powers of input variables
-            powers <- pt[i, ]
-            powers[xc] <- powers[xc] - 1
-            Xpow <- sweep(Xraw, 2, powers, "^")
-
-            ## Compute marginal effect with respect to this coefficient
-            ans <- ans + (powers[xc] + 1) * coef(object)[i+1] * .rowProds(Xpow)
+        ## Derivative of logit transformation
+        if (object$family == "binomial") {
+            xb <- predict(object, type = "link")
+            ans <- dlogis(xb) * ans
         }
     } else {
         ##-- DISCRETE VARIABLE --##
@@ -211,63 +175,4 @@ print.summary.margEff.polywog <- function(x,
 {
     printCoefmat(zapsmall(x), digits = digits, ...)
     invisible(x)
-}
-
-##' Plot marginal effects
-##'
-##' Generates density plots of the observationwise marginal effects computed by
-##' \code{\link{margEff.polywog}}.
-##' @param x output of \code{\link{margEff.polywog}}.
-##' @param ... plotting parameters to be passed to \code{\link{plot.density}}.
-##' @return Data frame containing the variables whose densities were plotted,
-##' invisibly.
-##' @author Brenton Kenkel and Curtis S. Signorino
-##' @method plot margEff.polywog
-##' @export
-plot.margEff.polywog <- function(x, ...)
-{
-    if (!is.list(x)) {
-        x <- list(x)
-        names(x) <- attr(x[[1]], "xvar")
-    }
-
-    x <- MEtoDF(x)
-
-    ## Obtain dimensions
-    mfrow <- ceiling(sqrt(length(x)))
-    mfcol <- ceiling(length(x) / mfrow)
-    op <- par(mfrow = c(mfrow, mfcol))
-    on.exit(par(op))
-
-    ## Plot each density plot
-    for (i in seq_along(x))
-        plot(density(x[[i]]), main = names(x)[i], ...)
-
-    invisible(x)
-}
-
-## Bug-fixed version of matrixStats::rowProds (which was released under an
-## Artistic-2.0 license, which is compatible with the GPL and hence can be
-## redistributed with modification here)
-
-.rowProds <- function (x, ...) 
-{
-    s <- (x == 0)
-    s <- rowSums(s)
-    ok <- (s == 0)
-    rm(s)
-    y <- vector(mode(x), nrow(x))
-    x <- x[ok, , drop = FALSE]
-    s <- (x < 0)
-    s <- rowSums(s)
-    s <- (s%%2)
-    s <- c(+1, -1)[s + 1]
-    x <- abs(x)
-    x <- log(x)
-    x <- rowSums(x, ...)
-    x <- exp(x)
-    x <- s * x
-    y[ok] <- x
-    rm(ok, s, x)
-    y
 }

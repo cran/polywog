@@ -1,13 +1,14 @@
-##' @include helpers.r
-##' @include fitters.r
+##' @useDynLib polywog
+##' @importFrom Rcpp sourceCpp
 NULL
 
 ##' Bootstrapped basis regression with oracle model selection
 ##'
 ##' A package for flexible functional form estimation via bootstrapped basis
 ##' regression with oracle model selection.  This version of the software should
-##' be considered \strong{in beta}.  Please email the maintainer, Brenton Kenkel
-##' (\email{brenton.kenkel@@gmail.com}), with bug reports or feature requests.
+##' be considered \strong{in beta}.  For bug reports and feature requests,
+##' please email Brenton Kenkel (\email{brenton.kenkel@@gmail.com}) or file an
+##' issue at \url{https://github.com/brentonk/polywog-package/issues}.
 ##' @name polywog-package
 ##' @docType package
 ##' @section Acknowledgements: We are grateful to Tyson Chatangier for many
@@ -54,10 +55,12 @@ NULL
 ##' \eqn{\lambda} and the polynomial degree simultaneously via cross-validation,
 ##' see \code{\link{cv.polywog}}.)
 ##'
-##' The bootstrap iterations may be run in parallel via
-##' \code{\link[foreach]{foreach}} by registering an appropriate backend and
-##' specifying \code{.parallel = TRUE}.  For more information on parallel
-##' processing, see the documentation and examples for \code{\link{bootPolywog}}.
+##' The cross-validation process may be run in parallel via
+##' \code{\link{foreach}} by registering an appropriate backend and specifying
+##' \code{.parallel = TRUE}.  The appropriate backend is system-specific; see
+##' \code{\link{foreach}} for information on selecting and registering a
+##' backend.  The bootstrap iterations may also be run in parallel by
+##' specifying \code{control.boot = control.bp(.parallel = TRUE)}.
 ##' @param formula model formula specifying the response and input
 ##' variables.  See "Details" for more information.
 ##' @param data a data frame, list or environment containing the variables
@@ -79,69 +82,98 @@ NULL
 ##' logistic models when \code{method = "alasso"}: \code{"lm"} (default) for a
 ##' linear probability model, \code{"glm"} for logistic regression.
 ##' @param unpenalized names of model terms to be exempt from the adaptive
-##' penalty (only available when \code{model = "alasso"}).
+##' penalty (only available when \code{method = "alasso"}).
+##' @param .parallel logical: whether to perform k-fold cross-validation in
+##' parallel (only available when \code{method = "alasso"}).  See "Details"
+##' below for more information on parallel computation.
 ##' @param boot number of bootstrap iterations (0 for no bootstrapping).
 ##' @param control.boot list of arguments to be passed to
 ##' \code{\link{bootPolywog}} when bootstrapping; see \code{\link{control.bp}}.
-##' @param .parallel logical: whether to perform bootstrap iterations in
-##' parallel using \code{\link[foreach]{foreach}}.  See the "Details" section of
-##' the \code{\link{bootPolywog}} documentation page for more on parallel
-##' computation.
-##' @param model logical: whether to include the model frame in the returned
-##' object (default \code{TRUE}).  It may be problematic to run
-##' \code{\link{predVals}} or \code{\link{bootPolywog}} on a polywog object fit
-##' with \code{model = FALSE}.
-##' @param X logical: whether to include the polynomial-expanded design matrix
-##' in the returned object (default \code{FALSE}).
-##' @param y logical: whether to include the response variable in the returned
-##' object (default \code{FALSE}).
+##' @param lambda a vector of values from which the penalty factor is to be
+##' selected via k-fold cross-validation.  \code{lambda} is left unspecified
+##' by default, in which case a sequence of values is generated automatically,
+##' controlled by the \code{nlambda} and \code{lambda.min.ratio} arguments.
+##' Naturally, k-fold cross-validation is skipped if \code{lambda} contains
+##' exactly one value.
+##' @param nlambda number of values of the penalty factor to examine via
+##' cross-validation if \code{lambda} is not specified in advance; see
+##' "Details".
+##' @param lambda.min.ratio ratio of the lowest value to the highest in the
+##' generated sequence of values of the penalty factor if \code{lambda} is
+##' not specified; see "Details".
 ##' @param nfolds number of folds to use in cross-validation to select the
-##' penalization parameter.
-##' @param scad.maxit maximum number of iterations when \code{method = "scad"}
-##' (see \code{\link{ncvreg}}); ignored when \code{method = "alasso"}.
+##' penalization factor.
+##' @param foldid optional vector manually assigning fold numbers to each
+##' observation used for fitting (only available when \code{method =
+##' "alasso"}).
+##' @param thresh convergence threshold, passed as the \code{thresh} argument
+##' to \code{\link{glmnet}} when \code{method = "alasso"} and as the
+##' \code{eps} argument to \code{\link{ncvreg}} when \code{method = "scad"}.
+##' @param maxit maximum number of iterations to allow in adaptive LASSO or
+##' SCAD fitting.
+##' @param model logical: whether to include the model frame in the returned
+##' object.
+##' @param X logical: whether to include the raw design matrix (i.e., the
+##' matrix of input variables prior to taking their polynomial expansion) in
+##' the returned object.
+##' @param y logical: whether to include the response variable in the returned
+##' object.
 ##' @return An object of class \code{"polywog"}, a list containing: \describe{
 ##'   \item{\code{coefficients}}{the estimated coefficients.}
-##'   \item{\code{lambda}}{the penalization parameter selected by
+##'   \item{\code{lambda}}{value of the penalty factor \eqn{\lambda} used to
+##' fit the final model.}
+##'   \item{\code{lambda.cv}}{a list containing the results of the
+##' cross-validation procedure used to select the penalty factor: \describe{
+##'     \item{\code{lambda}}{values of the penalty factor tested in
 ##' cross-validation.}
+##'     \item{\code{cvError}}{out-of-fold prediction error corresponding to
+##' each value of \code{lambda}.}
+##'     \item{\code{lambdaMin}}{value of \code{lambda} with the minimal
+##' cross-validation error.}
+##'     \item{\code{errorMin}}{minimized value of the cross-validation error.}
+##'   }}
 ##'   \item{\code{fitted.values}}{the fitted mean values for each observation
 ##' used in fitting.}
 ##'   \item{\code{lmcoef}}{coefficients from an unpenalized least-squares
-##' regression.}
-##'   \item{\code{penwt}}{penalty weights if \code{method = "alasso"},
-##' \code{NULL} otherwise.}
-##'   \item{\code{formula}}{model formula.}
-##'   \item{\code{degree}}{degree of polynomial basis expansion.}
+##' regression of the response variable on the polynomial expansion of the
+##' input variables.}
+##'   \item{\code{penwt}}{adaptive weight given to each term in the LASSO
+##' penalty (\code{NULL} for models fit via SCAD).}
+##'   \item{\code{formula}}{model formula, as a \code{\link{Formula}} object.}
+##'   \item{\code{degree}}{degree of the polynomial basis expansion.}
 ##'   \item{\code{family}}{model family, \code{"gaussian"} or
 ##' \code{"binomial"}.}
-##'   \item{\code{weights}}{observation weights if specified, \code{NULL}
-##' otherwise.}
-##'   \item{\code{method}}{regularization method, \code{"alasso"} or
-##' \code{"scad"}.}
-##'   \item{\code{penwt.method}}{estimator for penalty weights in adaptive LASSO
-##' models, \code{"lm"} or \code{"glm"}; is \code{NULL} if \code{method =
-##' "scad"}.}
-##'   \item{\code{unpenalized}}{columns of the model matrix (not including
-##' intercept) to be exempt from the adaptive penalty.}
-##'   \item{\code{nfolds}}{number of cross-validation folds.}
-##'   \item{\code{terms}}{the \code{\link{terms}} object used in fitting.}
-##'   \item{\code{pivot}}{indices of the non-collinear columns of the full basis
-##' expansion of the input variables.}
-##'   \item{\code{nobs}}{number of observations used in fitting.}
-##'   \item{\code{na.action}}{information on how \code{NA}s in the input data were
-##' handled.}
+##'   \item{\code{weights}}{observation weights if specified.}
+##'   \item{\code{method}}{the specified regularization method.}
+##'   \item{\code{penwt.method}}{the specified method for calculating
+##' the adaptive LASSO weights (\code{NULL} for models fit via SCAD).}
+##'   \item{\code{unpenalized}}{logical vector indicating which terms were not
+##' included in the LASSO penalty.}
+##'   \item{\code{thresh}}{convergence threshold used in fitting.}
+##'   \item{\code{maxit}}{iteration limit used in fitting.}
+##'   \item{\code{terms}}{the \code{\link{terms}} object used to construct the
+##' model frame.}
+##'   \item{\code{polyTerms}}{a matrix indicating the power of each raw input
+##' term (columns) in each term of the polynomial expansion used in fitting
+##' (rows).}
+##'   \item{\code{nobs}}{the number of observations used to fit the model.}
+##'   \item{\code{na.action}}{information on how \code{NA} values in the input
+##' data were handled.}
 ##'   \item{\code{xlevels}}{levels of factor variables used in fitting.}
-##'   \item{\code{polyTerms}}{a matrix recording how many powers of each raw
-##' input term are represented in each column of the design matrix.}
 ##'   \item{\code{varNames}}{names of the raw input variables included in the
-##' model.}
+##' model formula.}
 ##'   \item{\code{call}}{the original function call.}
-##'   \item{\code{model}}{(if requested) the model frame (see
-##' \code{\link{model.frame}}).}
-##'   \item{\code{X}}{(if requested) the basis-expanded design matrix.}
-##'   \item{\code{y}}{(if requested) the response variable.}
-##'   \item{\code{boot.matrix}}{(if \code{boot > 0}) a sparse matrix of class
-##' \code{"\link[=dgCMatrix-class]{dgCMatrix}"} containing bootstrap
-##' coefficients (see \code{\link{bootPolywog}}).}
+##'   \item{\code{model}}{if \code{model = TRUE}, the model frame used in
+##' fitting; otherwise \code{NULL}.}
+##'   \item{\code{X}}{if \code{X = TRUE}, the raw model matrix (i.e., prior to
+##' taking the polynomial expansion); otherwise \code{NULL}.  For calculating
+##' the expanded model matrix, see \code{\link{model.matrix.polywog}}.}
+##'   \item{\code{y}}{if \code{y = TRUE}, the response variable used in
+##' fitting; otherwise \code{NULL}.}
+##'   \item{\code{boot.matrix}}{if \code{boot > 0}, a sparse matrix of class
+##' \code{"\linkS4class{dgCMatrix}"} where each column is the estimate from a
+##' bootstrap replicate.  See \code{\link{bootPolywog}} for more information
+##' on bootstrapping.}
 ##' }
 ##' @seealso To estimate variation via the bootstrap, see
 ##' \code{\link{bootPolywog}}.  To generate fitted values, see
@@ -150,51 +182,40 @@ NULL
 ##' The polynomial degree may be selected via cross-validation using
 ##' \code{\link{cv.polywog}}.
 ##'
-##' Polynomial basis expansions of matrix inputs are computed with
-##' \code{\link{polym2}}.
-##'
 ##' Adaptive LASSO estimates are provided via \code{\link{glmnet}} and
 ##' \code{\link{cv.glmnet}} from the \pkg{glmnet} package.  SCAD estimates are
-##' via \code{\link{cv.ncvreg}} and \code{\link{ncvreg}} in the \pkg{ncvreg}
+##' via \code{\link{ncvreg}} and \code{\link{cv.ncvreg}} in the \pkg{ncvreg}
 ##' package.
 ##' @references Brenton Kenkel and Curtis S. Signorino.  2012.  "A Method for
 ##' Flexible Functional Form Estimation: Bootstrapped Basis Regression with
 ##' Variable Selection."  Typescript, University of Rochester.
 ##' @author Brenton Kenkel and Curtis S. Signorino
 ##' @export
-##' @examples
-##' ## Using occupational prestige data
-##' data(Prestige, package = "car")
-##' Prestige <- transform(Prestige, income = income / 1000)
-##'
-##' ## Fit a polywog model with bootstrap iterations
-##' set.seed(22)
-##' fit1 <- polywog(prestige ~ education + income + type, data = Prestige,
-##'                 boot = 10)
-##'
-##' ## Basic information
-##' print(fit1)
-##' summary(fit1)
-##'
-##' ## See how fitted values change with education holding all else fixed
-##' predVals(fit1, "education", n = 10)
-##'
-##' ## Plot univariate relationships
-##' plot(fit1)
-##'
-##' ## Change regularization method
-##' fit2 <- update(fit1, method = "scad")
-##' cbind(coef(fit1), coef(fit2))
-polywog <- function(formula, data, subset, weights, na.action,
+##' @example inst/examples/polywog.r
+##' @import Formula
+polywog <- function(formula,
+                    data,
+                    subset,
+                    weights,
+                    na.action,
                     degree = 3,
                     family = c("gaussian", "binomial"),
-                    method = c("alasso", "scad", "none"),
+                    method = c("alasso", "scad"),
                     penwt.method = c("lm", "glm"),
                     unpenalized = character(0),
-                    boot = 0, control.boot = control.bp(),
                     .parallel = FALSE,
-                    model = TRUE, X = FALSE, y = FALSE,
-                    nfolds = 10, scad.maxit = 5000)
+                    boot = 0,
+                    control.boot = control.bp(.parallel = .parallel),
+                    lambda = NULL,
+                    nlambda = 100,
+                    lambda.min.ratio = 1e-4,
+                    nfolds = 10,
+                    foldid = NULL,
+                    thresh = ifelse(method == "alasso", 1e-7, 0.001),
+                    maxit = ifelse(method == "alasso", 1e5, 5000),
+                    model = TRUE,
+                    X = FALSE,
+                    y = FALSE)
 {
     cl <- match.call()
     family <- match.arg(family)
@@ -202,6 +223,16 @@ polywog <- function(formula, data, subset, weights, na.action,
     penwt.method <- match.arg(penwt.method)
     ret.X <- X
     ret.y <- y
+
+    ## Check for bad argument combinations
+    if (method == "scad" && penwt.method != "lm")
+        warning("Argument 'penwt.method' is ignored when method = \"scad\"")
+    if (method == "scad" && !is.null(foldid))
+        warning("Argument 'foldid' is ignored when method = \"scad\"")
+    if (method == "scad" && .parallel)
+        warning("Cross-validation cannot be performed in parallel when method =\"scad\"")
+    if (method == "scad" && length(unpenalized) > 0)
+        warning("Argument 'unpenalized' is ignored when method = \"scad\"")
 
     ## Assemble the model frame the usual way
     formula <- as.Formula(formula)
@@ -213,86 +244,86 @@ polywog <- function(formula, data, subset, weights, na.action,
     mf <- eval(mf, parent.frame())
     terms <- attr(mf, "terms")
 
-    ## Store variable names (for use in 'print.polywog')
-    varNames <- character()
-    expanded <- logical()
-    for (i in seq_len(length(formula)[2])) {
-        tt <- terms(stats::formula(formula, rhs = i), data = mf,
-                    simplify = TRUE)
-        tt <- attr(tt, "term.labels")
-        varNames <- c(varNames, tt)
-        expanded <- c(expanded, rep(i == 1, length(tt)))
-    }
-    attr(varNames, "expanded") <- expanded
-
-    ## Extract response variable and perform sanity check
-    y <- model.part(formula, mf, lhs = 1, drop = TRUE)
-    if (family == "binomial" && !all(y %in% c(0, 1)))
+    ## Compute the (raw) model matrix, response variable, and polynomial term
+    ## matrix
+    X <- makeX(formula, mf)
+    y <- model.response(mf)
+    if (family == "binomial" && !all(y %in% 0:1))
         stop("Response must be binary when family = \"binomial\"")
+    nobs <- nrow(X)
+    polyTerms <- makePolyTerms(degree = degree,
+                               k_expand = attr(X, "k_expand"),
+                               k_lin = attr(X, "k_lin"),
+                               binary_cols = attr(X, "binary_cols"),
+                               names. = colnames(X))
 
     ## Extract weights if any (same code as in 'lm')
     w <- as.vector(model.weights(mf))
-    if (!is.null(w) && !is.numeric(w)) 
+    if (!is.null(w) && !is.numeric(w))
         stop("'weights' must be a numeric vector")
     nowt <- is.null(w)
     if (!nowt && method == "scad")
-        stop("weights not allowed with method = \"scad\"")
+        stop("Weights not allowed with method = \"scad\"")
     if (nowt)
-        w <- rep(1, length(y))
+        w <- rep(1, nobs)
     if (any(w < 0))
-        stop("negative weights not allowed")
+        stop("Negative weights not allowed")
 
-    ## Extract model matrix
-    X <- makeX(formula, mf, degree)
-
-    ## Compute linear model coefficients and eliminate singularities in X via
-    ## the QR decomposition
-    qx <- qr(sqrt(w) * cbind(1L, X))
-    pivot <- qx$pivot[seq_len(qx$rank)]
-    lmcoef <- qr.coef(qx, sqrt(w) * y)[pivot]
-    qx <- NULL  # To save memory
-    pivot <- pivot[-1] - 1  # Account for lack of intercept in X
-    polyTerms <- attr(X, "polyTerms")[pivot, ]
-    X <- X[, pivot, drop = FALSE]
-
-    ## Compute penalty weights for adaptive lasso models
-    if (method != "scad") {
-        penwt <- 1 / abs(lmcoef[-1])
-        if (penwt.method != "lm" && family == "binomial") {
-            penwt <- penaltyWeightsBinary(X, y, w)
-        } else if (penwt.method != "lm") {
-            warning("For Gaussian model, forcing penwt.method = \"lm\"")
-            penwt.method <- "lm"
-        }
-    } else {
-        penwt <- NULL
-        penwt.method <- NULL
-    }
+    ## Store variable names (for use in 'print.polywog')
+    varNames <- extractVarNames(formula, mf)
 
     ## Check for unpenalized columns
-    if (length(unpenalized) > 0 && method == "scad") {
-        unpenalized <- character(0)
-        warning("Argument 'unpenalized' is unavailable when method = \"scad\"")
-    }
-    nopen <- which(colnames(X) %in% unpenalized)
-    if (length(unpenalized) > length(nopen)) {
-        warning("Some terms in 'unpenalized' do not appear in the model: ",
-                paste(unpenalized[!(unpenalized %in% colnames(X))],
-                      collapse = ", "))
-    }
-    penwt[nopen] <- 0
+    unpenalized <- makeUnpenalized(unpenalized, polyTerms)
 
-    ## Compute cross-validated model fit
+    ## Compute linear model coefficients and remove perfectly collinear terms
+    ## from the polynomial expansion and the list of unpenalized terms
+    lmcoef <- computeLinearCoef(X, y, polyTerms, w)
+    pivot <- attr(lmcoef, "pivot")
+    polyTerms <- polyTerms[pivot, , drop = FALSE]
+    unpenalized <- unpenalized[pivot]
+
+    ## Compute penalty weights (NULL when using SCAD)
+    penwt <- computePenaltyWeights(X = X,
+                                   y = y,
+                                   weights = w,
+                                   polyTerms = polyTerms,
+                                   lmcoef = lmcoef,
+                                   method = method,
+                                   penwt.method = penwt.method,
+                                   family = family,
+                                   unpenalized = unpenalized)
+
+    ## Compute model fit
     fitPolywog <- switch(method,
-                         alasso = fitALasso,
-                         scad = fitSCAD,
-                         none = function(...) NULL)
-    pfit <- fitPolywog(X = X, y = y, weights = w, family = family,
-                       penwt = penwt, lambda = NULL, nfolds = nfolds,
-                       scad.maxit = scad.maxit)
+                         alasso = fitAdaptiveLASSO,
+                         scad = fitSCAD)
+    fit <- fitPolywog(X = X,
+                      y = y,
+                      weights = w,
+                      polyTerms = polyTerms,
+                      family = family,
+                      penwt = penwt,
+                      lambda = lambda,
+                      nlambda = nlambda,
+                      lambda.min.ratio = lambda.min.ratio,
+                      nfolds = nfolds,
+                      foldid = foldid,
+                      thresh = thresh,
+                      maxit = maxit,
+                      .parallel = .parallel)
+
+    ## Compute in-sample fitted values
+    fittedVals <- computePredict(X = X,
+                                 poly_terms = polyTerms,
+                                 coef = list(main = fit$coef),
+                                 forPredVals = FALSE,
+                                 interval = FALSE,
+                                 bag = FALSE,
+                                 level = 0,
+                                 transform = family == "binomial")$fit
 
     ## Assemble object to return.  Ordering schema is as follows:
-    ##   (1) Final estimates (including penalization parameter)
+    ##   (1) Final estimates (including penalization factor)
     ##   (2) Auxiliary quantities computed from those estimates
     ##   (3) First-stage estimates (including penalty weights)
     ##   (4) Information used in fitting (degree, observation weights, penalty
@@ -301,438 +332,47 @@ polywog <- function(formula, data, subset, weights, na.action,
     ##   prediction, or marginal effects
     ##   (6) Other auxiliary information used for print/summary methods
     ##   (7) Optional components (model, X, y)
-    ans <- list(coefficients = pfit$coef,
-                lambda = pfit$lambda,
-                # (2)
-                fitted.values =
-                if (method != "none") drop(cbind(1L, X) %*% pfit$coef) else NULL,
-                # (3)
+    ans <- list(coefficients = fit$coef,
+                lambda = fit$lambda,
+                lambda.cv = fit$lambda.cv,
+                ## (2)
+                fitted.values = fittedVals,
+                ## (3)
                 lmcoef = lmcoef,
                 penwt = penwt,
-                # (4)
+                ## (4)
                 formula = formula,
                 degree = degree,
                 family = family,
                 weights = if (nowt) NULL else w,
                 method = method,
-                penwt.method = penwt.method,
-                unpenalized = nopen,
-                nfolds = nfolds,
-                # (5)
+                penwt.method = if (method == "alasso") penwt.method,
+                unpenalized = if (method == "alasso") unpenalized,
+                thresh = thresh,
+                maxit = maxit,
+                ## (5)
                 terms = terms,
-                pivot = pivot,
-                nobs = nrow(X),
+                polyTerms = polyTerms,
+                nobs = nobs,
                 na.action = attr(mf, "na.action"),
                 xlevels = .getXlevels(terms, mf),
-                polyTerms = polyTerms,
-                # (6)
+                ## (6)
                 varNames = varNames,
-                call = cl)
-    if (method != "none" && family == "binomial")
-        ans$fitted.values <- plogis(ans$fitted.values)
+                call = cl,
+                ## (7)
+                model = if (model) mf,
+                X = if (ret.X) X,
+                y = if (ret.y) y)
     class(ans) <- "polywog"
-    if (model)
-        ans$model <- mf
-    if (ret.X)
-        ans$X <- X
-    if (ret.y)
-        ans$y <- y
 
     ## Bootstrapping, if requested
-    if (boot > 0 && method != "none") {
-        ## Temporarily include model in object if necessary
-        if (!model && !(ret.X && ret.y))
-            ans$model <- mf
-
-        ## Construct call to 'bootPolywog' from supplied options
+    if (boot > 0) {
         ans$boot.matrix <- do.call(bootPolywog,
                                    c(control.boot,
-                                     list(model = ans, nboot = boot, .matrixOnly
-                                          = TRUE, .parallel = .parallel)))
-
-        ## Remove temporarily included model if not requested
-        if (!model)
-            ans$model <- NULL
+                                     list(model = ans,
+                                          nboot = boot,
+                                          .matrixOnly = TRUE)))
     }
 
     return(ans)
-}
-
-##' Auxiliary for bootstrap options
-##'
-##' Used to pass options to \code{\link{bootPolywog}} when bootstrapping via the
-##' \code{boot} option of the main \code{\link{polywog}} function.
-##' @inheritParams bootPolywog
-##' @return A list containing the function arguments.
-##' @author Brenton Kenkel and Curtis S. Signorino
-##' @export
-control.bp <- function(reuse.lambda = FALSE, reuse.penwt = FALSE,
-                       maxtries = 1000, min.prop = 0, report = FALSE,
-                       scad.maxit = 5000)
-{
-    list(reuse.lambda = reuse.lambda, reuse.penwt = reuse.penwt,
-         maxtries = maxtries, report = report, scad.maxit = scad.maxit)
-}
-
-##
-## Innards of the bootstrap procedure
-##
-bootFit <- function(X, y, weights, family, lambda, penwt, method, penwt.method,
-                    unpenalized, nfolds, scad.maxit, pb, i)
-{
-    ## Calculate penalty weights unless specified
-    if (method == "alasso" && is.null(penwt)) {
-        if (family == "gaussian" || penwt.method == "lm") {
-            penwt <- lsfit(X, y, wt = weights, intercept = TRUE)$coef
-            penwt <- 1 / abs(penwt[-1])
-        } else {
-            penwt <- penaltyWeightsBinary(X, y, weights)
-        }
-
-        penwt[unpenalized] <- 0
-    }
-
-    ## Fit model on bootstrap data and catch any convergence errors
-    fitPolywog <- switch(method, alasso = fitALasso, scad = fitSCAD)
-    ans <- tryCatch(fitPolywog(X = X, y = y, weights = weights, family = family,
-                               penwt = penwt, lambda = lambda, nfolds = nfolds,
-                               scad.maxit = scad.maxit)$coef,
-                    error = identity)
-
-    ## Increment progress bar if specified
-    if(!is.null(pb))
-        setTxtProgressBar(pb, i)
-
-    return(ans)
-}
-
-##' Bootstrap a fitted polywog model
-##'
-##' Nonparametric bootstrap of the \code{\link{polywog}} regression procedure.
-##' Can be run on a fitted model of class \code{"polywog"}, or within the
-##' original procedure via the \code{boot} argument.
-##'
-##' When \code{.parallel = TRUE}, parallel computation is performed via
-##' \code{\link[foreach:foreach]{\%dopar\%}} using the currently registered
-##' backend.  Typically this will be \pkg{doMC} on Mac/Unix, \pkg{doSMP} on
-##' Windows, and \pkg{doSNOW} in cluster environments.  Users must load the
-##' appropriate packages and register the parallel environment before calling
-##' \code{bootPolywog} (or \code{\link{polywog}} with \code{boot > 0}).  If a
-##' parallel backend is not registered but \code{.parallel = TRUE}, computation
-##' will proceed sequentially and \code{\%dopar\%} will issue a warning.
-##' @param model a fitted model of class \code{"polywog"}, typically the output
-##' of \code{\link{polywog}}.
-##' @param nboot number of bootstrap iterations.
-##' @param reuse.lambda logical: whether to use the penalization parameter from
-##' the original fit (\code{TRUE}), or to cross-validate within each iteration
-##' (\code{FALSE}, default).
-##' @param reuse.penwt logical: whether to use the penalty weights from the
-##' original dataset for adaptive LASSO models (\code{TRUE}), or to re-calculate
-##' penalty weights within each iteration (\code{FALSE}, default).
-##' @param maxtries maximum number of attempts to generate a bootstrap sample
-##' with a non-collinear model matrix (often problematic with lopsided binary
-##' regressors) before failing.
-##' @param min.prop for models with a binary response, minimum proportion of
-##' non-modal outcome to ensure is included in each bootstrap iteration (for
-##' example, set \code{min.prop = 0.1} to throw out any bootstrap iteration
-##' where less than 10 percent of the responses are 1's)
-##' @param report logical: whether to print a status bar.  Not available if
-##' \code{.parallel = TRUE}.
-##' @param scad.maxit maximum number of iterations for \code{\link{ncvreg}} in
-##' SCAD models.
-##' @param .parallel logical: whether to parallelize computation via
-##' \code{\link[foreach]{foreach}}; see "Details" below.
-##' @param .matrixOnly logical: whether to return just the matrix of bootstrap
-##' coefficients (\code{TRUE}), or the originally supplied model with the
-##' bootstrap matrix as the \code{boot.matrix} element (\code{FALSE}, default).
-##' @return If \code{.matrixOnly = FALSE}, the returned object is \code{model}
-##' with the bootstrap matrix included as its \code{boot.matrix} element.  If
-##' \code{.matrixOnly = TRUE}, just the matrix is returned.  In either case, the
-##' bootstrap matrix is a sparse matrix of class
-##' \code{"\link[=dgCMatrix-class]{dgCMatrix}"}.
-##' @author Brenton Kenkel and Curtis S. Signorino
-##' @export
-##' @examples
-##' ## Using occupational prestige data
-##' data(Prestige, package = "car")
-##' Prestige <- transform(Prestige, income = income / 1000)
-##'
-##' ## Fit a polywog model without bootstrap iterations
-##' fit1 <- polywog(prestige ~ education + income + type, data = Prestige)
-##' summary(fit1)
-##'
-##' ## Add bootstrap to the fitted model
-##' fit2 <- bootPolywog(fit1, nboot = 10)
-##' summary(fit2)
-##'
-##' ## Example of parallel processing on Mac/Unix via 'doMC'
-##' \dontrun{
-##' library(doMC)
-##' registerDoMC()
-##' 
-##' fit2 <- bootPolywog(fit1, nboot = 100, .parallel = TRUE)
-##' }
-##'
-##' ## Example of parallel processing on Windows via 'doSMP'
-##' \dontrun{
-##' library(doSMP)
-##' w <- startWorkers()
-##' registerDoSMP(w)
-##' 
-##' fit2 <- bootPolywog(fit1, nboot = 100, .parallel = TRUE)
-##' 
-##' stopWorkers(w)
-##' }
-bootPolywog <- function(model, nboot = 100, reuse.lambda = FALSE,
-                        reuse.penwt = FALSE, maxtries = 1000, min.prop = 0,
-                        report = FALSE,
-                        scad.maxit = 5000,
-                        .parallel = FALSE, .matrixOnly = FALSE)
-{
-    ## Load 'foreach' package for parallelization if requested
-    if (.parallel && !require("foreach")) {
-        .parallel <- FALSE
-        warning("Must have 'foreach' package installed to use parallelization")
-    }
-
-    ## Can't have a progress bar in parallel, sadly
-    if (.parallel && report) {
-        report <- FALSE
-        warning("'report' set to FALSE because parallelization enabled")
-    }
-
-    ## Extract relevant information about initial fit
-    ncf <- length(coef(model))
-    formula <- model$formula
-    degree <- model$degree
-    family <- model$family
-    method <- model$method
-    penwt.method <- model$penwt.method
-    unpenalized <- model$unpenalized
-    pivot <- model$pivot
-    nobs <- model$nobs
-    lambda <- if (reuse.lambda) model$lambda else NULL
-    penwt <- if (reuse.penwt) model$penwt else NULL
-    nfolds <- model$nfolds
-    weights <- model$weights
-    if (is.null(weights))
-        weights <- rep(1, nobs)
-
-    ## Obtain original model matrix and response
-    if (!is.null(model$X)) {
-        X <- model$X
-    } else {
-        if (is.null(model$model))
-            stop("Fitted object must contain either 'model' or both 'X' and 'y'; re-run polywog with \"model = TRUE\"")
-        X <- makeX(formula, model$model, degree)[, pivot, drop = FALSE]
-    }
-    if (!is.null(model$y)) {
-        y <- model$y
-    } else {
-        if (is.null(model$model))
-            stop("Fitted object must contain either 'model' or both 'X' and 'y'; re-run polywog with \"model = TRUE\"")
-        y <- model.part(formula, model$model, lhs = 1, drop = TRUE)
-    }
-    isBinary <- length(unique(y)) <= 2
-
-    ## Bootstrap iterations
-    pb <- if (report) txtProgressBar(min = 0, max = nboot) else NULL
-
-    ## Loop over bootstrap iterations
-    if (.parallel) {
-        ## Loop in parallel via 'foreach'
-        ans <- foreach (i = seq_len(nboot), .packages = "polywog") %dopar% {
-            tries <- 0
-            repeat {
-                ## Ensure that the bootstrap X matrix has the same rank as the
-                ## original one
-                tries <- tries + 1
-                if (tries > maxtries)
-                    stop("'maxtries' reached; no non-collinear bootstrap sample found")
-                ind <- sample(seq_len(nobs), nobs, replace = TRUE)
-                Xgood <- qr(cbind(1L, X[ind, , drop = FALSE]))$rank == ncf
-                ygood <- !isBinary || (mean(y[ind]) > min.prop &&
-                                       mean(1-y[ind]) > min.prop)
-                if (Xgood && ygood)
-                    break
-            }
-            polywog:::bootFit(X = X[ind, , drop = FALSE], y = y[ind], weights =
-                    weights[ind], family = family, lambda = lambda, penwt =
-                    penwt, method = method, penwt.method = penwt.method,
-                    unpenalized = unpenalized,
-                    nfolds = nfolds, scad.maxit = scad.maxit, pb = pb, i = i)
-        }
-    } else {
-        ## Use a sequential 'for' loop
-        ans <- vector("list", nboot)
-        for (i in seq_len(nboot)) {
-            tries <- 0
-            repeat {
-                ## Ensure that the bootstrap X matrix has the same rank as the
-                ## original one
-                tries <- tries + 1
-                if (tries > maxtries)
-                    stop("'maxtries' reached; no non-collinear bootstrap sample found")
-                ind <- sample(seq_len(nobs), nobs, replace = TRUE)
-                if (qr(cbind(1L, X[ind, , drop = FALSE]))$rank == ncf)
-                    break
-            }
-            ans[[i]] <-
-                bootFit(X = X[ind, , drop = FALSE], y = y[ind], weights =
-                        weights[ind], family = family, lambda = lambda, penwt =
-                        penwt, method = method, penwt.method = penwt.method,
-                        unpenalized = unpenalized,
-                        nfolds = nfolds, scad.maxit = scad.maxit, pb = pb, i = i)
-        }
-    }
-
-    if (report)  # Print newline after progress bar completes
-        cat("\n")
-
-    ## Warn about failures
-    failures <- sapply(ans, function(x) inherits(x, "error"))
-    if (sum(failures) > 0) {
-        warning(sum(failures),
-                " bootstrap iterations failed to converge and were removed",
-                if (reuse.lambda) "; try setting 'reuse.lambda' to FALSE")
-    }
-
-    ## Store results in sparse matrix
-    ans <- do.call(rbind, ans[!failures])
-    ans <- Matrix(ans, sparse = TRUE)
-
-    ## If .matrixOnly (typically only used within 'polywog'), return only the
-    ## bootstrap matrix itself; otherwise, return the original model object with
-    ## the bootstrap matrix included as an element
-    if (.matrixOnly) {
-        return(ans)
-    } else {
-        model$boot.matrix <- ans
-        return(model)
-    }
-}
-
-##' @S3method print polywog
-print.polywog <- function(x, ...)
-{
-    ## Print the function call used to fit the model (using same code as in
-    ## 'print.lm')
-    cat("\nCall:\n", paste(deparse(x$call), sep = "\n", collapse = "\n"), 
-        "\n\n", sep = "")
-
-    ## Extract lists of expanded and non-expanded terms
-    expanded <- attr(x$varNames, "expanded")
-    inTerms <- paste(x$varNames[expanded], collapse = ", ")
-    cat("Variables included in polynomial expansion of degree ", x$degree, ":\n",
-        sep = "")
-    writeLines(strwrap(inTerms, prefix = "  "))
-    if (any(!expanded)) {
-        outTerms <- paste(x$varNames[!expanded], collapse = ", ")
-        cat("\nVariables included linearly:\n")
-        writeLines(strwrap(outTerms, prefix = "  "))
-    }
-
-    ## Print regularization method
-    cat("\nRegularization method:",
-        switch(x$method, alasso = "Adaptive LASSO", scad = "SCAD"))
-
-    cat("\n\n")
-    invisible(x)
-}
-
-##' @S3method vcov polywog
-vcov.polywog <- function(object, ...)
-{
-    ncf <- length(coef(object))
-    if (!is.null(object$boot.matrix)) {
-        ans <- var(as.matrix(object$boot.matrix))
-    } else {
-        ans <- matrix(NA, nrow = ncf, ncol = ncf)
-    }
-    return(ans)
-}
-
-##' Summarize a fitted polywog model
-##'
-##' Generates a "regression table" to summarize the fitted model, including
-##' coefficients along with their bootstrapped standard errors and confidence
-##' intervals.  If the fitted model does not have a \code{boot.matrix} element,
-##' the output will contain \code{NA}s for the standard errors, and confidence
-##' intervals will not be displayed.
-##' @param object a fitted model of class \code{"polywog"}, typically the output
-##' of \code{\link{polywog}}.
-##' @param level width of the bootstrap confidence interval to compute for the
-##' model coefficients.
-##' @param prop0 logical: whether to print the proportion of bootstrap
-##' iterations in which each coefficient was estimated as exactly 0.  This may
-##' be informative but should \emph{not} be interpreted as a p-value.
-##' @param ... other arguments, currently ignored.
-##' @return An object of class \code{"summary.polywog"} whose elements are the
-##' "regression table" (\code{coefficients}) and additional information from the
-##' original fitted model.
-##' @author Brenton Kenkel and Curtis S. Signorino
-##' @method summary polywog
-##' @export
-##' @importMethodsFrom Matrix colMeans
-summary.polywog <- function(object, level = .95, prop0 = FALSE, ...)
-{
-    ans <- list()
-
-    ## Create matrix of summary results to be printed
-    cf <- coef(object)
-    se <- sqrt(diag(vcov(object)))
-    ans$coefficients <- cbind("Estimate" = cf, "Std. Error" = se)
-    if (!is.null(object$boot.matrix)) {
-        q <- 0.5 - (level/2)
-        interval <- apply(object$boot.matrix, 2, quantile, probs = c(q, 1-q))
-        p0 <- colMeans(object$boot.matrix == 0)
-        ans$coefficients <- cbind(ans$coefficients, t(interval),
-                                  "Prop. 0" = if (prop0) p0)
-    }
-
-    ## Add relevant information for printing model summary
-    ans$call <- object$call
-    ans$degree <- object$degree
-    ans$family <- object$family
-    ans$method <- object$method
-    ans$penwt.method <- object$penwt.method
-    ans$nobs <- object$nobs
-    ans$nboot <-
-        if (!is.null(object$boot.matrix)) nrow(object$boot.matrix) else 0
-    ans$lambda <- object$lambda
-
-    class(ans) <- "summary.polywog"
-    return(ans)
-}
-
-##' @S3method print summary.polywog
-print.summary.polywog <- function(x, digits = max(3, getOption("digits") - 3),
-                                  ...)
-{
-    ## Print the function call used to fit the model (using same code as in
-    ## 'print.lm')
-    cat("\nCall:\n", paste(deparse(x$call), sep = "\n", collapse = "\n"), 
-        "\n\n", sep = "")
-
-    ## Print a typical 'summary'-style matrix
-    cat("Coefficients:\n")
-    printCoefmat(coef(x), digits = digits, ...)
-
-    ## Print important info about the model
-    cat("\nRegularization method:",
-        switch(x$method, alasso = "Adaptive LASSO", scad = "SCAD"))
-    if (x$method == "alasso") {
-        pname <- switch(x$penwt.method,
-                        lm = "inverse linear model coefficients",
-                        glm = "inverse logistic regression coefficients")
-        cat("\nAdaptive weights:", pname)
-    }
-    cat("\nNumber of observations:", x$nobs)
-    cat("\nPolynomial expansion degree:", x$degree)
-    cat("\nModel family:", x$family)
-    cat("\nBootstrap iterations:", x$nboot)
-    cat("\nPenalization parameter (lambda):", format(x$lambda, digits = digits))
-    cat("\n\n")
-
-    invisible(x)
 }
